@@ -6,9 +6,19 @@ import (
 	"os"
 	"time"
 	"encoding/binary"
+	"fmt"
 )
 
 func main() {
+	log.Println("bounceback 0.1.0")
+	if len(os.Args) < 2 {
+		fmt.Println("Missing server/client argument.")
+		fmt.Println("Usage:")
+		fmt.Println("bounceback server")
+		fmt.Println("bounceback client example.com:31337")
+		os.Exit(1)
+	}
+
 	if os.Args[1] == "client" {
 		bouncebackClient()
 	} else {
@@ -44,11 +54,19 @@ func bouncebackServer() {
 }
 
 func bouncebackClient() {
+	if len(os.Args) < 3 {
+		fmt.Println("Missing destination.")
+		fmt.Println("Usage: bounceback client example.com:31337")
+		os.Exit(1)
+	}
+
 	dest := os.Args[2]
 
 	log.Println("Connecting..")
 
 	var seq uint64
+	pktHistory := make([]int64, 256)
+	var rollingAverage int64
 
 	destAddr, err := net.ResolveUDPAddr("udp4", dest)
 	if err != nil {
@@ -63,8 +81,11 @@ func bouncebackClient() {
 	}
 	defer conn.Close()
 
+	throttlePosition, _ := time.ParseDuration("17ms")
+
+	log.Printf("Connected to %s, gathering baseline...", destAddr)
+
 	for {
-		throttlePosition, _ := time.ParseDuration("17ms")
 		nextPktTime := time.Now().Add(throttlePosition)
 		seq++
 		msg := make([]byte, 8)
@@ -80,7 +101,9 @@ func bouncebackClient() {
 			continue
 		}
 		_, err = conn.Read(resp)
-		duration := time.Since(sentTime)
+		rtt := time.Since(sentTime)
+		rttMicroseconds := int64(rtt.Microseconds())
+		// log.Printf("Round trip took: %d microseconds.", rttMicroseconds)
 
 		respInt := binary.LittleEndian.Uint64(resp)
 		if err != nil {
@@ -89,12 +112,33 @@ func bouncebackClient() {
 		}
 
 		if respInt != seq {
+			log.Printf("DESYNC: expected seq number %d, received %d", seq, respInt)
 			log.Println("DESYNC: sleeping 2 seconds")
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		log.Printf("Round trip took: %d microseconds.", duration.Microseconds())
+		if seq > 256 && rollingAverage * 10 <= rttMicroseconds {
+			log.Printf("!!! Significant excursion from mean: %d microseconds. Seq %d", rttMicroseconds, seq)
+		}
+
+		pktHistory[seq % 256] = rttMicroseconds
+
+		// calculate our rolling average once the array is full, and then once every 32 packets
+		if seq == 256 || seq >= 256 && seq % 32 == 0 {
+			rollingAverage = 0
+			averageCount := int64(256)
+			for k, t := range pktHistory {
+				// discard outliers
+				if k != 0 && pktHistory[k-1] * 10 < t {
+					averageCount--
+					continue
+				}
+				rollingAverage += t
+			}
+			rollingAverage = rollingAverage / averageCount
+			log.Printf("Rolling Average: %d microseconds", rollingAverage)
+		}
 
 		if time.Now().Before(nextPktTime){
 			time.Sleep(time.Until(nextPktTime))
