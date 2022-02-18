@@ -64,8 +64,8 @@ func bouncebackClient() {
 	defer conn.Close()
 
 	for {
-		// TODO: add throttling
-		// nextPktTime := time.Now().Add(time.ParseDuration("17ms"))
+		throttlePosition, _ := time.ParseDuration("17ms")
+		nextPktTime := time.Now().Add(throttlePosition)
 		seq++
 		msg := make([]byte, 8)
 		resp := make([]byte, 8)
@@ -95,5 +95,9 @@ func bouncebackClient() {
 		}
 
 		log.Printf("Round trip took: %d microseconds.", duration.Microseconds())
+
+		if time.Now().Before(nextPktTime){
+			time.Sleep(time.Until(nextPktTime))
+		}
 	}
 }
