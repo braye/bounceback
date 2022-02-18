@@ -4,6 +4,10 @@ This repository implements a simple network diagnostic tool which passes UDP pac
 
 Useful for capturing intermittent jitter, e.g. on wireless network connections.
 
+## Building
+
+The tool has no external dependencies - simply run `go build .` in the project repository after cloning. Built on go 1.16, also tested on 1.15.
+
 ## Usage
 
 The tool has a simple client-server architecture. Run `bounceback server` on the endpoint you wish to measure latency to. The server listens for connections from the client on port 31337, on all IPv4 addresses.
