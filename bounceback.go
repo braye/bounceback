@@ -38,7 +38,7 @@ func bouncebackServer() {
 			log.Printf("Error reading msg from udp connection: %s", err)
 			break
 		}
-		log.Printf("recieved packet from %s, seq %d", addr, msg)
+		log.Printf("recieved packet from %s, seq %d", addr, binary.LittleEndian.Uint64(msg))
 		_, err = metrics.WriteTo(msg, addr)
 	}
 }
