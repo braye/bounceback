@@ -1,12 +1,12 @@
 package main
 
 import (
-	"net"
-	"log"
-	"os"
-	"time"
 	"encoding/binary"
 	"fmt"
+	"log"
+	"net"
+	"os"
+	"time"
 )
 
 func main() {
@@ -41,7 +41,7 @@ func bouncebackServer() {
 	log.Println("Listening on port 31337.")
 	defer metrics.Close()
 
-	for{
+	for {
 		msg := make([]byte, 8)
 		_, addr, err := metrics.ReadFrom(msg)
 		if err != nil {
@@ -118,19 +118,19 @@ func bouncebackClient() {
 			continue
 		}
 
-		if seq > 256 && rollingAverage * 10 <= rttMicroseconds {
+		if seq > 256 && rollingAverage*10 <= rttMicroseconds {
 			log.Printf("!!! Significant excursion from mean: %d microseconds. Seq %d", rttMicroseconds, seq)
 		}
 
-		pktHistory[seq % 256] = rttMicroseconds
+		pktHistory[seq%256] = rttMicroseconds
 
 		// calculate our rolling average once the array is full, and then once every 32 packets
-		if seq == 256 || seq >= 256 && seq % 32 == 0 {
+		if seq == 256 || seq >= 256 && seq%32 == 0 {
 			rollingAverage = 0
 			averageCount := int64(256)
 			for k, t := range pktHistory {
 				// discard outliers
-				if k != 0 && pktHistory[k-1] * 10 < t {
+				if k != 0 && pktHistory[k-1]*10 < t {
 					averageCount--
 					continue
 				}
@@ -140,7 +140,7 @@ func bouncebackClient() {
 			log.Printf("Rolling Average: %d microseconds", rollingAverage)
 		}
 
-		if time.Now().Before(nextPktTime){
+		if time.Now().Before(nextPktTime) {
 			time.Sleep(time.Until(nextPktTime))
 		}
 	}
