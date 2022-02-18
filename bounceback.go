@@ -17,13 +17,13 @@ func main() {
 }
 
 func bouncebackServer() {
-	listenerUDPAddr, err := net.ResolveUDPAddr("udp", ":31337")
+	listenerUDPAddr, err := net.ResolveUDPAddr("udp4", ":31337")
 	if err != nil {
 		log.Println("error resolving listen address:")
 		log.Fatal(err)
 	}
 
-	metrics, err := net.ListenUDP("udp", listenerUDPAddr)
+	metrics, err := net.ListenUDP("udp4", listenerUDPAddr)
 	if err != nil {
 		log.Println("Error listening on port 31337.")
 		log.Fatal(err)
@@ -50,13 +50,13 @@ func bouncebackClient() {
 
 	var seq uint64
 
-	destAddr, err := net.ResolveUDPAddr("udp", dest)
+	destAddr, err := net.ResolveUDPAddr("udp4", dest)
 	if err != nil {
 		log.Println("error resolving destination address:")
 		log.Fatal(err)
 	}
 
-	conn, err := net.DialUDP("udp", nil, destAddr)
+	conn, err := net.DialUDP("udp4", nil, destAddr)
 	if err != nil {
 		log.Println("Error connecting to destination:")
 		log.Fatal(err)
