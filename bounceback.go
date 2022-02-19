@@ -6,39 +6,81 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"time"
 )
 
 func main() {
-	log.Println("bounceback 0.1.0")
-	if len(os.Args) < 2 {
-		fmt.Println("Missing server/client argument.")
-		fmt.Println("Usage:")
-		fmt.Println("bounceback server")
-		fmt.Println("bounceback client example.com:31337")
-		os.Exit(1)
+	fmt.Println("bounceback 0.2.0")
+
+	mode := "server"
+	port := 31337
+	rate := 60
+	host := "example.com"
+
+	for k, arg := range os.Args {
+		switch arg {
+		case "--host":
+			if len(os.Args) < k+2 {
+				fmt.Println("Missing value for host argument.")
+				usageMsg()
+			}
+			host = os.Args[k+1]
+			mode = "client"
+		case "--port":
+			if len(os.Args) < k+2 {
+				fmt.Println("Missing value for port argument.")
+				usageMsg()
+			}
+			p, err := strconv.Atoi(os.Args[k+1])
+			if err != nil {
+				fmt.Println("Could not parse port argument as int.")
+				usageMsg()
+			}
+			port = p
+		case "--rate":
+			// TODO: code reuse, meh
+			if len(os.Args) < k+2 {
+				fmt.Println("Missing value for rate argument.")
+				usageMsg()
+			}
+			r, err := strconv.Atoi(os.Args[k+1])
+			if err != nil {
+				fmt.Println("Could not parse rate argument as int.")
+				usageMsg()
+			}
+			rate = r
+		}
 	}
 
-	if os.Args[1] == "client" {
-		bouncebackClient()
+	if mode == "client" {
+		bouncebackClient(host, port, rate)
 	} else {
-		bouncebackServer()
+		bouncebackServer(port)
 	}
 }
 
-func bouncebackServer() {
-	listenerUDPAddr, err := net.ResolveUDPAddr("udp4", ":31337")
+func usageMsg() {
+	fmt.Println("Usage:")
+	fmt.Println("(Server) bounceback [--port 31337]")
+	fmt.Println("(Client) bounceback --host example.com [--port 31337] [--rate 60]")
+	os.Exit(1)
+}
+
+func bouncebackServer(port int) {
+	listenAddr := fmt.Sprintf(":%d", port)
+	listenerUDPAddr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
-		log.Println("error resolving listen address:")
+		log.Println("Error resolving listen address:")
 		log.Fatal(err)
 	}
 
-	metrics, err := net.ListenUDP("udp4", listenerUDPAddr)
+	metrics, err := net.ListenUDP("udp", listenerUDPAddr)
 	if err != nil {
-		log.Println("Error listening on port 31337.")
+		log.Printf("Error listening on port %d.", port)
 		log.Fatal(err)
 	}
-	log.Println("Listening on port 31337.")
+	log.Printf("Listening on port %d.", port)
 	defer metrics.Close()
 
 	for {
@@ -53,46 +95,47 @@ func bouncebackServer() {
 	}
 }
 
-func bouncebackClient() {
-	if len(os.Args) < 3 {
-		fmt.Println("Missing destination.")
-		fmt.Println("Usage: bounceback client example.com:31337")
-		os.Exit(1)
-	}
-
-	dest := os.Args[2]
-
-	log.Println("Connecting..")
-
-	var seq uint64
-	pktHistory := make([]int64, 256)
-	var rollingAverage int64
-
-	destAddr, err := net.ResolveUDPAddr("udp4", dest)
+func bouncebackClient(host string, port int, rate int) {
+	dest := fmt.Sprintf("%s:%d", host, port)
+	destAddr, err := net.ResolveUDPAddr("udp", dest)
 	if err != nil {
-		log.Println("error resolving destination address:")
+		log.Println("Error resolving destination address:")
 		log.Fatal(err)
 	}
 
-	conn, err := net.DialUDP("udp4", nil, destAddr)
+	conn, err := net.DialUDP("udp", nil, destAddr)
 	if err != nil {
 		log.Println("Error connecting to destination:")
 		log.Fatal(err)
 	}
 	defer conn.Close()
 
-	throttlePosition, _ := time.ParseDuration("17ms")
+	hertzToMs := 1000/rate
+
+	throttlePosition, err := time.ParseDuration(fmt.Sprintf("%dms",hertzToMs))
+	if err != nil {
+		log.Println("Could not parse rate argument.")
+		log.Fatal(err)
+	}
 
 	log.Printf("Connected to %s, gathering baseline...", destAddr)
 
+	// int64s because why not
+	var seq uint64
+	pktHistory := make([]int64, 256)
+	var rollingAverage int64
+	
+	// main packet sending loop
 	for {
 		nextPktTime := time.Now().Add(throttlePosition)
 		seq++
 		msg := make([]byte, 8)
 		resp := make([]byte, 8)
+		// our UDP packet consists of a single uint64, representing packet number
 		binary.LittleEndian.PutUint64(msg, seq)
 		_, err = conn.Write(msg)
 
+		// only start timing after conn.Write returns, to mitigate os/driver latency
 		sentTime := time.Now()
 		if err != nil {
 			log.Println(err)
@@ -103,14 +146,15 @@ func bouncebackClient() {
 		_, err = conn.Read(resp)
 		rtt := time.Since(sentTime)
 		rttMicroseconds := int64(rtt.Microseconds())
-		// log.Printf("Round trip took: %d microseconds.", rttMicroseconds)
-
-		respInt := binary.LittleEndian.Uint64(resp)
 		if err != nil {
-			log.Println("Error parsing seq number from UDP response")
+			log.Println("Error reading UDP response")
 			log.Fatal(err)
 		}
 
+		respInt := binary.LittleEndian.Uint64(resp)
+
+		// if we get an out-of-order response for some reason, let the network settle and try again
+		// also trips if our response is mangled in some way
 		if respInt != seq {
 			log.Printf("DESYNC: expected seq number %d, received %d", seq, respInt)
 			log.Println("DESYNC: sleeping 2 seconds")
@@ -118,6 +162,9 @@ func bouncebackClient() {
 			continue
 		}
 
+		// define "significant" jitter as 10x the rolling average
+		// not all UDP applications are sensitive to this level of jitter
+		// VOIP and delay-based netcode games (path of exile, most JP fighting games) do not tolerate this level of jitter well
 		if seq > 256 && rollingAverage*10 <= rttMicroseconds {
 			log.Printf("!!! Significant excursion from mean: %d microseconds. Seq %d", rttMicroseconds, seq)
 		}
@@ -129,7 +176,7 @@ func bouncebackClient() {
 			rollingAverage = 0
 			averageCount := int64(256)
 			for k, t := range pktHistory {
-				// discard outliers
+				// discard outliers to keep our sense of the "normal" network state
 				if k != 0 && pktHistory[k-1]*10 < t {
 					averageCount--
 					continue
@@ -140,6 +187,7 @@ func bouncebackClient() {
 			log.Printf("Rolling Average: %d microseconds", rollingAverage)
 		}
 
+		// throttle requests so we don't induce network problems by effectively DoSing
 		if time.Now().Before(nextPktTime) {
 			time.Sleep(time.Until(nextPktTime))
 		}
