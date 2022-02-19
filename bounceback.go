@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	fmt.Println("bounceback 0.2.0")
+	fmt.Println("bounceback 0.2.1")
 
 	mode := "server"
 	port := 31337
@@ -118,16 +118,20 @@ func bouncebackClient(host string, port int, rate int) {
 		log.Fatal(err)
 	}
 
+	timeout, _ := time.ParseDuration("1000ms")
+
 	log.Printf("Connected to %s, gathering baseline...", destAddr)
 
 	// int64s because why not
 	var seq uint64
 	pktHistory := make([]int64, 256)
 	var rollingAverage int64
-	
+
 	// main packet sending loop
 	for {
 		nextPktTime := time.Now().Add(throttlePosition)
+		timeoutTime := time.Now().Add(timeout)
+		conn.SetReadDeadline(timeoutTime)
 		seq++
 		msg := make([]byte, 8)
 		resp := make([]byte, 8)
@@ -147,8 +151,10 @@ func bouncebackClient(host string, port int, rate int) {
 		rtt := time.Since(sentTime)
 		rttMicroseconds := int64(rtt.Microseconds())
 		if err != nil {
-			log.Println("Error reading UDP response")
-			log.Fatal(err)
+			log.Println(err)
+			log.Println("Error reading UDP packet, sleeping 5 seconds and retrying.")
+			time.Sleep(5 * time.Second)
+			continue
 		}
 
 		respInt := binary.LittleEndian.Uint64(resp)
